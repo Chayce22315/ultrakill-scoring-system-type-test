@@ -3,7 +3,9 @@
 #include <cstdio>
 #include <vector>
 #include <algorithm>
+#include <string>
 
+struct vec3 { float x{}, y{}, z{}; };
 struct vec2 { float x{}, y{}; };
 
 static float clampf(float v, float lo, float hi) {
@@ -33,252 +35,189 @@ int main(int, char**) {
 
     SDL_Window* window = SDL_CreateWindow(
         "ultrakill scoring type system test i dunno",
-        1280, 720,
-        SDL_WINDOW_RESIZABLE
+        1280, 720, SDL_WINDOW_RESIZABLE
     );
-    if (!window) {
-        SDL_Quit();
-        return 2;
-    }
+    if (!window) { SDL_Quit(); return 2; }
 
     SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
-    if (!renderer) {
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 3;
-    }
+    if (!renderer) { SDL_DestroyWindow(window); SDL_Quit(); return 3; }
 
-    bool running = true;
-    bool sliding = false;
-    bool flashlight_spinning = false;
-    bool blackout = false;
-    bool generator_powered = false;
-    bool floor_complete = false;
-    bool cashout = false;
-
-    int floor = 1;
-    int fragments = 0;
-    int banked = 0;
+    bool running = true, sliding = false, flashlight_spinning = false;
+    bool blackout = false, floor_complete = false, cashout = false;
+    int floor = 1, fragments = 0, banked = 0;
     int fragment_target = 12;
-    float coolness = 0.0f;
-    float score = 0.0f;
+    float coolness = 0, score = 0, yaw = 0, pitch = 0;
+    float player_x = 0, player_y = 0, player_z = 1.7f;
+    float vel_x = 0, vel_y = 0, vel_z = 0;
+    bool grounded = true;
 
-    vec2 player{640.0f, 360.0f};
-    vec2 velocity{};
-    vec2 generator{1050.0f, 550.0f};
+    struct Fragment { float x, y, z; bool taken; };
+    std::vector<Fragment> fs;
 
-    std::vector<vec2> fragment_positions;
-    auto spawn_fragments = [&]() {
-        fragment_positions.clear();
+    auto spawn = [&]() {
+        fs.clear();
         for (int i = 0; i < fragment_target; ++i) {
-            float a = static_cast<float>(i) * 2.399963f + floor * 0.71f;
-            float radius = 90.0f + static_cast<float>((i * 73 + floor * 41) % 230);
-            fragment_positions.push_back({
-                640.0f + std::cos(a) * radius,
-                360.0f + std::sin(a) * radius
-            });
+            float a = i * 2.399963f + floor * .71f;
+            float r = 5.0f + ((i * 73 + floor * 41) % 12);
+            fs.push_back({std::cos(a) * r, std::sin(a) * r, .8f, false});
         }
-        fragments = 0;
-        floor_complete = false;
-        cashout = false;
-        blackout = false;
-        generator_powered = false;
-        generator = {1050.0f, 550.0f};
+        fragments = 0; floor_complete = false; cashout = false; blackout = false;
     };
-    spawn_fragments();
+    spawn();
 
     Uint64 previous = SDL_GetPerformanceCounter();
+    bool mouse_captured = false;
 
     while (running) {
         Uint64 now = SDL_GetPerformanceCounter();
-        float dt = static_cast<float>(now - previous) /
-                   static_cast<float>(SDL_GetPerformanceFrequency());
+        float dt = clampf(float(now - previous) / float(SDL_GetPerformanceFrequency()), 0, .05f);
         previous = now;
-        dt = clampf(dt, 0.0f, 0.05f);
 
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_EVENT_QUIT) running = false;
-
-            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
-                const auto key = event.key.scancode;
-
-                if (key == SDL_SCANCODE_ESCAPE) running = false;
-
-                if (key == SDL_SCANCODE_LCTRL || key == SDL_SCANCODE_C)
-                    sliding = true;
-
-                if (key == SDL_SCANCODE_F)
-                    flashlight_spinning = !flashlight_spinning;
-
-                if (key == SDL_SCANCODE_B && !blackout && !floor_complete)
-                    blackout = true;
-
-                if (floor_complete) {
-                    if (key == SDL_SCANCODE_Y) {
-                        floor++;
-                        fragment_target = std::min(20, 10 + floor % 11);
-                        spawn_fragments();
-                    }
-                    if (key == SDL_SCANCODE_N) {
-                        banked += static_cast<int>(score);
-                        score = 0.0f;
-                        cashout = true;
-                    }
-                }
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_EVENT_QUIT) running = false;
+            if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
+                auto k = e.key.scancode;
+                if (k == SDL_SCANCODE_ESCAPE) running = false;
+                if (k == SDL_SCANCODE_LCTRL || k == SDL_SCANCODE_C) sliding = true;
+                if (k == SDL_SCANCODE_SPACE && grounded && !floor_complete) { vel_z = 7.0f; grounded = false; }
+                if (k == SDL_SCANCODE_F) flashlight_spinning = !flashlight_spinning;
+                if (k == SDL_SCANCODE_B && !blackout && !floor_complete) blackout = true;
+                if (floor_complete && k == SDL_SCANCODE_Y) { ++floor; fragment_target = std::min(20, 10 + floor % 11); spawn(); }
+                if (floor_complete && k == SDL_SCANCODE_N) { banked += int(score); score = 0; cashout = true; }
             }
+            if (e.type == SDL_EVENT_KEY_UP &&
+                (e.key.scancode == SDL_SCANCODE_LCTRL || e.key.scancode == SDL_SCANCODE_C)) sliding = false;
 
-            if (event.type == SDL_EVENT_KEY_UP &&
-                (event.key.scancode == SDL_SCANCODE_LCTRL ||
-                 event.key.scancode == SDL_SCANCODE_C)) {
-                sliding = false;
+            if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) {
+                mouse_captured = true;
+                SDL_SetWindowRelativeMouseMode(window, true);
+            }
+            if (e.type == SDL_EVENT_MOUSE_MOTION && mouse_captured && !floor_complete) {
+                yaw += e.motion.xrel * .0025f;
+                pitch = clampf(pitch - e.motion.yrel * .0025f, -1.35f, 1.35f);
             }
         }
 
         const bool* keys = SDL_GetKeyboardState(nullptr);
-        vec2 wish{};
-        if (keys[SDL_SCANCODE_W]) wish.y -= 1.0f;
-        if (keys[SDL_SCANCODE_S]) wish.y += 1.0f;
-        if (keys[SDL_SCANCODE_A]) wish.x -= 1.0f;
-        if (keys[SDL_SCANCODE_D]) wish.x += 1.0f;
-        wish = normalize(wish);
+        float fx = 0, fy = 0;
+        if (keys[SDL_SCANCODE_W]) fy += 1;
+        if (keys[SDL_SCANCODE_S]) fy -= 1;
+        if (keys[SDL_SCANCODE_A]) fx -= 1;
+        if (keys[SDL_SCANCODE_D]) fx += 1;
+        float fl = std::sqrt(fx*fx + fy*fy);
+        if (fl > 0) { fx /= fl; fy /= fl; }
 
-        const float acceleration = sliding ? 1500.0f : 900.0f;
-        velocity.x += wish.x * acceleration * dt;
-        velocity.y += wish.y * acceleration * dt;
+        float forward_x = std::sin(yaw), forward_y = std::cos(yaw);
+        float right_x = std::cos(yaw), right_y = -std::sin(yaw);
+        float wish_x = forward_x * fy + right_x * fx;
+        float wish_y = forward_y * fy + right_y * fx;
 
-        const float max_speed = sliding ? 620.0f : 360.0f;
-        float speed = length(velocity);
-        if (speed > max_speed) {
-            velocity.x *= max_speed / speed;
-            velocity.y *= max_speed / speed;
-        }
+        float accel = sliding ? 18.0f : 11.0f;
+        vel_x += wish_x * accel * dt;
+        vel_y += wish_y * accel * dt;
+        float max_speed = sliding ? 18.0f : 10.0f;
+        float sp = std::sqrt(vel_x*vel_x + vel_y*vel_y);
+        if (sp > max_speed) { vel_x *= max_speed/sp; vel_y *= max_speed/sp; }
+        if (fl == 0) { float drag = std::pow(.0008f, dt); vel_x *= drag; vel_y *= drag; }
 
-        if (length(wish) < 0.1f) {
-            const float drag = std::pow(0.0008f, dt);
-            velocity.x *= drag;
-            velocity.y *= drag;
-        }
+        player_x += vel_x * dt; player_y += vel_y * dt;
+        vel_z -= 20.0f * dt; player_z += vel_z * dt;
+        if (player_z <= 1.7f) { player_z = 1.7f; vel_z = 0; grounded = true; }
 
-        player.x += velocity.x * dt;
-        player.y += velocity.y * dt;
-        player.x = clampf(player.x, 32.0f, 1248.0f);
-        player.y = clampf(player.y, 32.0f, 688.0f);
+        sp = std::sqrt(vel_x*vel_x + vel_y*vel_y);
+        float mach = sp * 3.6f / 343.0f;
+        score += mach * dt * 10.0f;
+        if (sliding) score += sp * dt * 2.0f;
+        if (sliding && sp > 8 && flashlight_spinning) coolness = std::min(100.0f, coolness + 35*dt);
+        else coolness = std::max(0.0f, coolness - 8*dt);
 
-        speed = length(velocity);
-        float mach = speed / 343.0f;
-
-        if (sliding && speed > 300.0f && flashlight_spinning)
-            coolness = std::min(100.0f, coolness + 35.0f * dt);
-        else
-            coolness = std::max(0.0f, coolness - 8.0f * dt);
-
-        score += mach * dt * 3.0f;
-        if (sliding) score += speed * dt * 0.008f;
-
-        if (!floor_complete && !cashout) {
-            for (auto it = fragment_positions.begin(); it != fragment_positions.end();) {
-                if (length({player.x - it->x, player.y - it->y}) < 24.0f) {
-                    ++fragments;
-                    score += 100.0f;
-                    it = fragment_positions.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-
-            if (fragments >= fragment_target) {
-                fragments = fragment_target;
-                floor_complete = true;
-                blackout = false;
-            }
-
-            if (blackout && !generator_powered &&
-                length({player.x - generator.x, player.y - generator.y}) < 55.0f) {
-                generator_powered = true;
-                blackout = false;
-                score += 500.0f;
+        for (auto& f : fs) {
+            float dx=f.x-player_x, dy=f.y-player_y, dz=f.z-player_z;
+            if (!f.taken && std::sqrt(dx*dx+dy*dy+dz*dz) < .8f) {
+                f.taken=true; ++fragments; score += 100;
             }
         }
+        if (fragments >= fragment_target) floor_complete = true;
 
-        text_title(window, floor, fragments, banked, mach, blackout, coolness);
+        float genx=10, geny=-8;
+        if (blackout && std::sqrt((player_x-genx)*(player_x-genx)+(player_y-geny)*(player_y-geny)) < 1.3f) {
+            blackout=false; score+=500;
+        }
 
-        SDL_SetRenderDrawColor(renderer, 10, 10, 14, 255);
+        int w,h; SDL_GetRenderOutputSize(renderer,&w,&h);
+        SDL_SetRenderDrawColor(renderer, blackout ? 1:8, blackout ? 1:9, blackout ? 3:14,255);
         SDL_RenderClear(renderer);
 
-        SDL_FRect arena{24.0f, 24.0f, 1232.0f, 672.0f};
-        SDL_SetRenderDrawColor(renderer, 35, 35, 45, 255);
-        SDL_RenderFillRect(renderer, &arena);
+        auto project = [&](float x,float y,float z, float& sx,float& sy,float& depth) -> bool {
+            float dx=x-player_x, dy=y-player_y;
+            float cy=std::cos(yaw), syaw=std::sin(yaw);
+            float cx=dx*cy-dy*syaw, cz=dx*syaw+dy*cy;
+            if (cz < .25f) return false;
+            float relz=z-player_z;
+            float cp=std::cos(pitch), spitch=std::sin(pitch);
+            float vz=relz*cp-cz*spitch;
+            float vd=relz*spitch+cz*cp;
+            if (vd <= .1f) return false;
+            float focal=700.0f;
+            sx=w*.5f + cx*focal/vd;
+            sy=h*.5f - vz*focal/vd;
+            depth=vd; return true;
+        };
 
+        // 3d-ish world: floor, walls, fragments, generator, and first-person body.
         if (!blackout) {
-            SDL_SetRenderDrawColor(renderer, 18, 18, 24, 255);
-            for (int x = 48; x < 1248; x += 48)
-                SDL_RenderLine(renderer, static_cast<float>(x), 24.0f,
-                               static_cast<float>(x), 696.0f);
-            for (int y = 48; y < 696; y += 48)
-                SDL_RenderLine(renderer, 24.0f, static_cast<float>(y),
-                               1256.0f, static_cast<float>(y));
+            SDL_SetRenderDrawColor(renderer, 24,24,31,255);
+            SDL_FRect floor_rect{0, h*.55f, float(w), h*.45f}; SDL_RenderFillRect(renderer,&floor_rect);
+            for (int i=-12;i<=12;i++) {
+                float sx,sy,d; if(project(float(i),-20,0,sx,sy,d)) SDL_RenderLine(renderer,sx,sy,sx,h*.98f);
+            }
+            for (int i=-20;i<=20;i+=2) {
+                float sx,sy,d; if(project(-12,float(i),0,sx,sy,d)) SDL_RenderLine(renderer,sx,sy,w*.75f,h*.98f);
+            }
         }
 
-        for (const auto& f : fragment_positions) {
-            SDL_FRect r{f.x - 7.0f, f.y - 7.0f, 14.0f, 14.0f};
-            SDL_SetRenderDrawColor(renderer, 230, 220, 90, 255);
-            SDL_RenderFillRect(renderer, &r);
+        for (const auto& f:fs) if(!f.taken) {
+            float sx,sy,d; if(project(f.x,f.y,f.z,sx,sy,d) && d < 45) {
+                float size=clampf(260/d,5,42);
+                SDL_SetRenderDrawColor(renderer,230,220,90,255);
+                SDL_FRect r{sx-size*.5f,sy-size*.5f,size,size}; SDL_RenderFillRect(renderer,&r);
+            }
         }
 
-        if (blackout && !generator_powered) {
-            SDL_FRect g{generator.x - 22.0f, generator.y - 22.0f, 44.0f, 44.0f};
-            SDL_SetRenderDrawColor(renderer, 80, 170, 255, 255);
-            SDL_RenderRect(renderer, &g);
+        if (blackout) {
+            float sx,sy,d; if(project(genx,geny,1.3f,sx,sy,d)) {
+                float size=clampf(400/d,12,80);
+                SDL_SetRenderDrawColor(renderer,80,170,255,255);
+                SDL_FRect g{sx-size*.5f,sy-size*.5f,size,size}; SDL_RenderRect(renderer,&g);
+            }
         }
 
-        SDL_FRect p{player.x - 10.0f, player.y - 10.0f, 20.0f, 20.0f};
-        SDL_SetRenderDrawColor(renderer, 240, 240, 245, 255);
-        SDL_RenderFillRect(renderer, &p);
-
+        // simple first-person hands/flashlight silhouette
+        SDL_SetRenderDrawColor(renderer,18,18,22,255);
+        SDL_FRect hand{w*.52f,h*.76f,120,180}; SDL_RenderFillRect(renderer,&hand);
         if (flashlight_spinning) {
-            const float a = static_cast<float>(now % 6283) / 1000.0f;
-            SDL_SetRenderDrawColor(renderer, 255, 245, 180, 255);
-            SDL_RenderLine(renderer, player.x, player.y,
-                           player.x + std::cos(a) * 42.0f,
-                           player.y + std::sin(a) * 42.0f);
+            float a=float(now%6283)/1000.0f;
+            SDL_SetRenderDrawColor(renderer,255,245,180,255);
+            SDL_RenderLine(renderer,w*.57f,h*.78f,w*.57f+std::cos(a)*90,h*.78f+std::sin(a)*90);
         }
+
+        char hud[512];
+        std::snprintf(hud,sizeof(hud),"floor %d   fragments %d/%d   score %.0f   banked %d   mach %.2f   coolness %.0f",
+            floor,fragments,fragment_target,score,banked,mach,coolness);
+        SDL_SetRenderDrawColor(renderer,235,235,240,255);
+        SDL_RenderDebugText(renderer,30,30,hud);
+        SDL_RenderDebugText(renderer,30,52,"wasd move | mouse look | space jump | ctrl/c slide | f flashlight | b blackout");
 
         if (floor_complete || cashout) {
-            SDL_FRect panel{365.0f, 275.0f, 550.0f, 170.0f};
-            SDL_SetRenderDrawColor(renderer, 8, 8, 12, 245);
-            SDL_RenderFillRect(renderer, &panel);
-            SDL_SetRenderDrawColor(renderer, 220, 220, 230, 255);
-            SDL_RenderRect(renderer, &panel);
-
-            if (cashout) {
-                SDL_SetRenderDrawColor(renderer, 120, 220, 140, 255);
-                SDL_RenderDebugText(renderer, 430.0f, 325.0f, "CASHED OUT. RUN SECURED.");
-            } else {
-                SDL_SetRenderDrawColor(renderer, 230, 220, 100, 255);
-                SDL_RenderDebugText(renderer, 430.0f, 310.0f, "FLOOR COMPLETE");
-                SDL_RenderDebugText(renderer, 430.0f, 340.0f, "Y = KEEP GOING    N = CASH OUT");
-            }
-            char line[128];
-            std::snprintf(line, sizeof(line), "UNBANKED SCORE: %.0f", score);
-            SDL_RenderDebugText(renderer, 430.0f, 370.0f, line);
-        } else {
-            char hud[256];
-            std::snprintf(hud, sizeof(hud),
-                "floor %d   fragments %d/%d   score %.0f   mach %.2f   coolness %.0f",
-                floor, fragments, fragment_target, score, mach, coolness);
-            SDL_SetRenderDrawColor(renderer, 235, 235, 240, 255);
-            SDL_RenderDebugText(renderer, 42.0f, 42.0f, hud);
-            SDL_RenderDebugText(renderer,
-                42.0f, 64.0f,
-                "wasd move | ctrl/c slide | f flashlight spin | b blackout | esc quit");
+            SDL_FRect p{w*.30f,h*.35f,w*.40f,150}; SDL_SetRenderDrawColor(renderer,8,8,12,240); SDL_RenderFillRect(renderer,&p);
+            SDL_SetRenderDrawColor(renderer,220,220,230,255); SDL_RenderRect(renderer,&p);
+            if (cashout) SDL_RenderDebugText(renderer,w*.34f,h*.43f,"CASHED OUT. RUN SECURED.");
+            else { SDL_RenderDebugText(renderer,w*.34f,h*.41f,"FLOOR COMPLETE"); SDL_RenderDebugText(renderer,w*.34f,h*.46f,"Y = KEEP GOING    N = CASH OUT"); }
         }
 
         SDL_RenderPresent(renderer);
     }
-
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
-    return 0;
+    SDL_SetWindowRelativeMouseMode(window,false);
+    SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit(); return 0;
 }
