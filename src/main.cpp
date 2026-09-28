@@ -79,6 +79,7 @@ int main(int, char**) {
             if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
                 auto k = e.key.scancode;
                 if (k == SDL_SCANCODE_ESCAPE) running = false;
+                if (k == SDL_SCANCODE_TAB) { mouse_captured = !mouse_captured; SDL_SetWindowRelativeMouseMode(window, mouse_captured); }
                 if (k == SDL_SCANCODE_LCTRL || k == SDL_SCANCODE_C) sliding = true;
                 if (k == SDL_SCANCODE_SPACE && grounded && !floor_complete) { vel_z = 7.0f; grounded = false; }
                 if (k == SDL_SCANCODE_F) flashlight_spinning = !flashlight_spinning;
@@ -207,7 +208,7 @@ int main(int, char**) {
             floor,fragments,fragment_target,score,banked,mach,coolness);
         SDL_SetRenderDrawColor(renderer,235,235,240,255);
         SDL_RenderDebugText(renderer,30,30,hud);
-        SDL_RenderDebugText(renderer,30,52,"wasd move | mouse look | space jump | ctrl/c slide | f flashlight | b blackout");
+        SDL_RenderDebugText(renderer,30,52,"wasd move | mouse look | tab unlock/relock mouse | space jump | ctrl/c slide | f flashlight | b blackout");
 
         if (floor_complete || cashout) {
             SDL_FRect p{w*.30f,h*.35f,w*.40f,150}; SDL_SetRenderDrawColor(renderer,8,8,12,240); SDL_RenderFillRect(renderer,&p);
