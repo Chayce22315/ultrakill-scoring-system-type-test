@@ -1,0 +1,37 @@
+name: build windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup cmake
+        uses: lukka/get-cmake@latest
+
+      - name: configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: build
+        run: cmake --build build --config Release
+
+      - name: package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build/bin/Release/* dist/ -Recurse -Force
+
+      - name: upload exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: ultrakill-scoring-system-type-test-windows
+          path: dist/
