@@ -19,7 +19,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(SDL3)
 
-add_executable(ultrakill_scoring_system_type_test WIN32 src/main.cpp)
+add_executable(ultrakill_scoring_system_type_test src/main.cpp)
 target_link_libraries(ultrakill_scoring_system_type_test PRIVATE SDL3::SDL3)
 
 if(WIN32)
